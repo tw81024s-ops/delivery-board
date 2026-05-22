@@ -342,19 +342,46 @@ function parseWorkbook(ab){
   const wb=XLSX.read(ab,{type:'array',sheets:[SHEET_NAME,RET_SHEET,DATA_SHEET],dense:false,cellDates:true});
   const ws=wb.Sheets[SHEET_NAME];
   if(!ws)throw new Error('在這個檔案找不到工作表「'+SHEET_NAME+'」');
-  const g=(c,r)=>{const x=ws[c+r];return x?x.v:undefined;};
-  const stations=[];let cur=null;
-  for(let r=25;r<=107;r++){
-    const grp=g('T',r);if(grp==='組別')continue;
-    if(grp!=null&&grp!=='')cur=String(grp).replace(/[\r\n]/g,'');
-    const sta=g('U',r)||g('V',r);const vol=_num(g('W',r));if(!sta||!vol)continue;
-    stations.push({group:cur,station:String(sta),vol:Math.round(vol),transit:Math.round(_num(g('Y',r))||0),done:Math.round(_num(g('AA',r))||0),open:Math.round(_num(g('AC',r))||0),unproc:Math.round(_num(g('AE',r))||0),rate:_pct(g('AG',r))||0,stay:_pct(g('AK',r))||0,proc:_pct(g('AL',r))||0});
+  // ---- 標題自動定位解析（容許欄位字母與列號位移、表中重複表頭）----
+  if(!ws['!ref'])throw new Error('工作表「'+SHEET_NAME+'」是空的');
+  const _rng=XLSX.utils.decode_range(ws['!ref']);
+  const _cell=(r,c)=>{const x=ws[XLSX.utils.encode_cell({r:r,c:c})];return x?x.v:undefined;};
+  const _norm=v=>v==null?'':String(v).replace(/[\s\r\n]/g,'');
+  // 1) 找表頭列：同列同時出現「組別」「站所」「應配」
+  let _hr=-1;
+  for(let r=_rng.s.r;r<=_rng.e.r&&_hr<0;r++){
+    let hasG=false,hasS=false,hasV=false;
+    for(let c=_rng.s.c;c<=_rng.e.c;c++){const t=_norm(_cell(r,c));if(t==='組別')hasG=true;if(t==='站所')hasS=true;if(t.indexOf('應配')>=0)hasV=true;}
+    if(hasG&&hasS&&hasV)_hr=r;
+  }
+  if(_hr<0)throw new Error('解析不到站所資料，請確認匯入的是正確的日結報表');
+  // 2) 依標題對應欄位（找不到回 -1）
+  const _find=(...keys)=>{for(let c=_rng.s.c;c<=_rng.e.c;c++){const t=_norm(_cell(_hr,c));for(const k of keys){if(t===k)return c;}}for(let c=_rng.s.c;c<=_rng.e.c;c++){const t=_norm(_cell(_hr,c));for(const k of keys){if(t.indexOf(k)>=0)return c;}}return -1;};
+  const COL={group:_find('組別'),station:_find('站所'),vol:_find('應配總量','應配'),transit:_find('轉運中'),arrived:_find('到站件數','到站'),done:_find('已配結'),open:_find('未結量'),proc:_find('已處理'),unproc:_find('未處理')};
+  const gv=(r,key)=>{const c=COL[key];return (c==null||c<0)?undefined:_cell(r,c);};
+  const _rate=(a,b)=>b?Math.round(a/b*1000)/10:0;
+  const stations=[];let cur=null,total=null;
+  for(let r=_hr+1;r<=_rng.e.r;r++){
+    const grpRaw=gv(r,'group');const grp=_norm(grpRaw);
+    if(grp==='組別')continue;                 // 跳過表中重複表頭
+    if(grp==='總計'){                          // 總計列
+      const v=Math.round(_num(gv(r,'vol'))||0),dn=Math.round(_num(gv(r,'done'))||0),op=Math.round(_num(gv(r,'open'))||0),pc=Math.round(_num(gv(r,'proc'))||0),up=Math.round(_num(gv(r,'unproc'))||0),tr=Math.round(_num(gv(r,'transit'))||0),ar=Math.round(_num(gv(r,'arrived'))||0);
+      total={vol:v,transit:tr,arrived:ar,done:dn,open:op,unproc:up,rate:_rate(dn,v),close_rate:_rate(dn,v),stay_rate:_rate(op,v),proc_rate:_rate(pc,pc+up)};
+      continue;
+    }
+    if(grpRaw!=null&&grp!=='')cur=String(grpRaw).replace(/[\r\n]/g,'');
+    const staRaw=gv(r,'station');const sta=staRaw==null?'':String(staRaw).trim();
+    const vol=_num(gv(r,'vol'));
+    if(!sta||vol==null)continue;
+    const done=Math.round(_num(gv(r,'done'))||0),open=Math.round(_num(gv(r,'open'))||0),pc=Math.round(_num(gv(r,'proc'))||0),up=Math.round(_num(gv(r,'unproc'))||0);
+    stations.push({group:cur,station:sta,vol:Math.round(vol),transit:Math.round(_num(gv(r,'transit'))||0),done:done,open:open,unproc:up,rate:_rate(done,vol),stay:_rate(open,vol),proc:_rate(pc,pc+up)});
   }
   if(!stations.length)throw new Error('解析不到站所資料，請確認匯入的是正確的日結報表');
   const gm={};stations.forEach(s=>{const x=gm[s.group]||(gm[s.group]={group:s.group,vol:0,done:0,open:0,transit:0,stations:0});x.vol+=s.vol;x.done+=s.done;x.open+=s.open;x.transit+=s.transit;x.stations++;});
   const groups=Object.values(gm).map(x=>{x.rate=x.vol?Math.round(x.done/x.vol*1000)/10:0;return x;}).sort((a,b)=>b.vol-a.vol);
   const alerts=stations.filter(s=>s.vol>=TH.alertMinVol).sort((a,b)=>a.rate-b.rate).slice(0,6);
-  const total={vol:Math.round(_num(g('W',108))||0),transit:Math.round(_num(g('Y',108))||0),arrived:Math.round(_num(g('Z',108))||0),done:Math.round(_num(g('AA',108))||0),open:Math.round(_num(g('AC',108))||0),unproc:Math.round(_num(g('AE',108))||0),rate:_pct(g('AG',108))||0,close_rate:_pct(g('AJ',108))||0,stay_rate:_pct(g('AK',108))||0,proc_rate:_pct(g('AL',108))||0};
+  if(!total){let v=0,dn=0,op=0,tr=0,up=0;stations.forEach(s=>{v+=s.vol;dn+=s.done;op+=s.open;tr+=s.transit;up+=s.unproc;});total={vol:v,transit:tr,arrived:v-tr,done:dn,open:op,unproc:up,rate:_rate(dn,v),close_rate:_rate(dn,v),stay_rate:_rate(op,v),proc_rate:0};}
+
   // 滯留統計明細
   let retention=[],ret_summary={total:0,bands:{},d3plus:0,types:{}};
   const rs=wb.Sheets[RET_SHEET];

@@ -422,7 +422,7 @@ function parseWorkbook(ab){
       transit={total:tot,retain:rt,rate:tot?Math.round(rt/tot*1000)/10:0,transit:tc,unsettled:uns,unpicked:upk,branches:arr,records};
     }
   }
-  const label=g('W',13);
+  let label='';for(let r=_rng.s.r;r<=Math.min(_rng.e.r,_hr);r++){for(let c=_rng.s.c;c<=_rng.e.c;c++){const v=_cell(r,c);if(v!=null&&/日結表|日結|\d{1,2}\/\d{1,2}/.test(String(v))){label=String(v).replace(/[\r\n]/g,' ').trim();break;}}if(label)break;}
   return {total,groups,stations,alerts,retention,ret_summary,transit,report_label:label?String(label):'',station_count:stations.length,group_count:groups.length,generated_at:new Date().toLocaleString('zh-Hant',{hour12:false}).replace(/\//g,'-')};
 }
 

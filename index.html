@@ -213,9 +213,9 @@ body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opa
 
   <nav class="tabs">
     <button class="tab active" data-tab="overview">🚚 當配總覽</button>
+    <button class="tab" data-tab="general">🧰 一般件總覽</button>
     <button class="tab" data-tab="detail">📋 滯留明細</button>
     <button class="tab" data-tab="transit">🚌 轉運滯留</button>
-    <button class="tab" data-tab="general">🧰 一般件總覽</button>
     <button class="tab exportbtn" id="exportAll">⬇ 匯出 Excel（全部）</button>
   </nav>
 
@@ -354,7 +354,7 @@ function _num(v){if(v==null)return null;if(typeof v==='string'){let s=v.replace(
 function _pct(v){let n=_num(v);if(n==null)return null;return n<=1.5?Math.round(n*1000)/10:Math.round(n*10)/10;}
 
 function parseWorkbook(ab){
-  const wb=XLSX.read(ab,{type:'array',sheets:[SHEET_NAME,RET_SHEET,DATA_SHEET],dense:false,cellDates:true});
+  const wb=XLSX.read(ab,{type:'array',sheets:[SHEET_NAME,RET_SHEET,DATA_SHEET,'TMS總圖表'],dense:false,cellDates:true});
   const ws=wb.Sheets[SHEET_NAME];
   if(!ws)throw new Error('在這個檔案找不到工作表「'+SHEET_NAME+'」');
   // ---- 標題自動定位解析（容許欄位字母與列號位移、表中重複表頭）----
@@ -437,32 +437,40 @@ function parseWorkbook(ab){
       transit={total:tot,retain:rt,rate:tot?Math.round(rt/tot*1000)/10:0,transit:tc,unsettled:uns,unpicked:upk,branches:arr,records};
     }
   }
-  // ===== 一般件總覽：由「數據統計」過濾一般件，依 組別→站所 彙總 =====
+  // ===== 一般件總覽：全部(TMS總圖表) - 當配(TMS總圖表 (當配))，依站所相減（與報表官方算法一致）=====
   let general=null;
-  if(ds&&ds['!ref']){
-    const grng=XLSX.utils.decode_range(ds['!ref']);
-    const gcol={};for(let c=grng.s.c;c<=grng.e.c;c++){const h=ds[XLSX.utils.encode_cell({r:grng.s.r,c:c})];const v=h?String(h.v).trim():'';if(v&&!(v in gcol))gcol[v]=c;}
-    const cKind=gcol['當配與一般件整理'],cGrp=gcol['組別'],cSta=gcol['處理站所'],cZ=(gcol['貨態整理拆分']!=null?gcol['貨態整理拆分']:gcol['貨態整理']);
-    if(cKind!=null&&cSta!=null&&cZ!=null){
-      const gat=(r,c)=>{const x=(c==null)?null:ds[XLSX.utils.encode_cell({r:r,c:c})];return x&&x.v!=null?String(x.v).trim():'';};
-      const gmapn={};
-      for(let r=grng.s.r+1;r<=grng.e.r;r++){
-        if(gat(r,cKind)!=='一般件')continue;
-        const grp=gat(r,cGrp)||'（未分組）';const sta=gat(r,cSta);if(!sta)continue;
-        const key=grp+'\u0001'+sta;const o=gmapn[key]||(gmapn[key]={group:grp,station:sta,vol:0,done:0,open:0,transit:0,unpick:0});
-        o.vol++;const z=gat(r,cZ);
-        if(z==='配結含配異結案')o.done++;else if(z==='轉運中')o.transit++;else if(z==='未取件')o.unpick++;else o.open++;
-      }
-      const gst=Object.values(gmapn).map(o=>{o.arrived=o.vol-o.transit;o.rate=o.vol?Math.round(o.done/o.vol*1000)/10:0;o.stay=o.vol?Math.round(o.open/o.vol*1000)/10:0;o.proc=0;o.unproc=0;return o;});
-      gst.sort((a,b)=>a.group<b.group?-1:(a.group>b.group?1:b.vol-a.vol));
-      const ggm={};gst.forEach(s=>{const x=ggm[s.group]||(ggm[s.group]={group:s.group,vol:0,done:0,open:0,transit:0,stations:0});x.vol+=s.vol;x.done+=s.done;x.open+=s.open;x.transit+=s.transit;x.stations++;});
-      const ggroups=Object.values(ggm).map(x=>{x.rate=x.vol?Math.round(x.done/x.vol*1000)/10:0;return x;}).sort((a,b)=>b.vol-a.vol);
-      let tv=0,td=0,to=0,tt=0,tu=0;gst.forEach(s=>{tv+=s.vol;td+=s.done;to+=s.open;tt+=s.transit;tu+=s.unpick;});
-      const gtotal={vol:tv,transit:tt,arrived:tv-tt,done:td,open:to,unpick:tu,unproc:0,rate:tv?Math.round(td/tv*1000)/10:0,stay_rate:tv?Math.round(to/tv*1000)/10:0,close_rate:(tv-tt)?Math.round(td/(tv-tt)*1000)/10:0,proc_rate:0};
-      const galerts=gst.filter(s=>s.vol>=TH.alertMinVol).sort((a,b)=>a.rate-b.rate).slice(0,6);
-      general={total:gtotal,groups:ggroups,stations:gst,alerts:galerts,station_count:gst.length,group_count:ggroups.length};
+  (function(){
+    function parseBlock(sheetName){
+      const w=wb.Sheets[sheetName];if(!w||!w['!ref'])return null;
+      const R=XLSX.utils.decode_range(w['!ref']);
+      const cell=(r,c)=>{const x=w[XLSX.utils.encode_cell({r:r,c:c})];return x?x.v:undefined;};
+      const norm=v=>v==null?'':String(v).replace(/[\s\r\n]/g,'');
+      let hr=-1;for(let r=R.s.r;r<=R.e.r&&hr<0;r++){let a=false,b=false,c2=false;for(let c=R.s.c;c<=R.e.c;c++){const t=norm(cell(r,c));if(t==='組別')a=true;if(t==='站所')b=true;if(t.indexOf('應配')>=0)c2=true;}if(a&&b&&c2)hr=r;}
+      if(hr<0)return null;
+      const find=(...keys)=>{for(let c=R.s.c;c<=R.e.c;c++){const t=norm(cell(hr,c));for(const k of keys)if(t===k)return c;}for(let c=R.s.c;c<=R.e.c;c++){const t=norm(cell(hr,c));for(const k of keys)if(t.indexOf(k)>=0)return c;}return -1;};
+      const CC={group:find('組別'),station:find('站所'),vol:find('應配總量','應配'),unpick:find('未取件'),transit:find('轉運中'),done:find('已配結'),open:find('未結量')};
+      const g=(r,k)=>{const c=CC[k];return (c==null||c<0)?undefined:cell(r,c);};
+      const arr=[];let cur=null;
+      for(let r=hr+1;r<=R.e.r;r++){const grp=norm(g(r,'group'));if(grp==='組別')continue;if(grp==='總計')break;if(g(r,'group')!=null&&grp!=='')cur=String(g(r,'group')).replace(/[\r\n]/g,'');const sta=g(r,'station');const stas=sta==null?'':String(sta).trim();const vol=_num(g(r,'vol'));if(!stas||vol==null)continue;arr.push({group:cur,station:stas,vol:Math.round(vol),done:Math.round(_num(g(r,'done'))||0),open:Math.round(_num(g(r,'open'))||0),transit:Math.round(_num(g(r,'transit'))||0),unpick:Math.round(_num(g(r,'unpick'))||0)});}
+      return arr;
     }
-  }
+    const all=parseBlock('TMS總圖表');const dp=parseBlock(SHEET_NAME);
+    if(!all||!all.length)return;
+    const dmap={};(dp||[]).forEach(s2=>{dmap[s2.station]=s2;});
+    const mx=(x)=>x<0?0:x;
+    const stations=all.map(s2=>{const d=dmap[s2.station]||{vol:0,done:0,open:0,transit:0,unpick:0};
+      const vol=mx(s2.vol-d.vol),done=mx(s2.done-d.done),open=mx(s2.open-d.open),transit=mx(s2.transit-d.transit),unpick=mx(s2.unpick-d.unpick);const arrived=mx(vol-transit);
+      return {group:s2.group,station:s2.station,vol:vol,done:done,open:open,transit:transit,unpick:unpick,unproc:0,arrived:arrived,rate:vol?Math.round(done/vol*1000)/10:0,stay:vol?Math.round(open/vol*1000)/10:0,proc:0};
+    }).filter(s2=>s2.vol>0);
+    stations.sort((a,b)=>a.group<b.group?-1:(a.group>b.group?1:b.vol-a.vol));
+    const gm={};stations.forEach(s2=>{const x=gm[s2.group]||(gm[s2.group]={group:s2.group,vol:0,done:0,open:0,transit:0,stations:0});x.vol+=s2.vol;x.done+=s2.done;x.open+=s2.open;x.transit+=s2.transit;x.stations++;});
+    const groups=Object.values(gm).map(x=>{x.rate=x.vol?Math.round(x.done/x.vol*1000)/10:0;return x;}).sort((a,b)=>b.vol-a.vol);
+    let tv=0,td=0,to=0,tt=0,tu=0;stations.forEach(s2=>{tv+=s2.vol;td+=s2.done;to+=s2.open;tt+=s2.transit;tu+=s2.unpick;});
+    const arrived=tv-tt;
+    const total={vol:tv,transit:tt,arrived:arrived,done:td,open:to,unpick:tu,unproc:0,rate:tv?Math.round(td/tv*1000)/10:0,stay_rate:tv?Math.round(to/tv*1000)/10:0,close_rate:arrived?Math.round(td/arrived*1000)/10:0,proc_rate:0};
+    const alerts=stations.filter(s2=>s2.vol>=TH.alertMinVol).sort((a,b)=>a.rate-b.rate).slice(0,6);
+    general={total:total,groups:groups,stations:stations,station_count:stations.length,group_count:groups.length,alerts:alerts};
+  })();
   let label='';for(let r=_rng.s.r;r<=Math.min(_rng.e.r,_hr);r++){for(let c=_rng.s.c;c<=_rng.e.c;c++){const v=_cell(r,c);if(v!=null&&/日結表|日結|\d{1,2}\/\d{1,2}/.test(String(v))){label=String(v).replace(/[\r\n]/g,' ').trim();break;}}if(label)break;}
   return {total,groups,stations,alerts,retention,ret_summary,transit,general,report_label:label?String(label):'',station_count:stations.length,group_count:groups.length,generated_at:new Date().toLocaleString('zh-Hant',{hour12:false}).replace(/\//g,'-')};
 }
@@ -560,7 +568,7 @@ function renderGeneral(G){
   G.alerts.forEach(s=>{const e=document.createElement('div');e.className='alert';
    e.innerHTML=`<div style="flex:1"><div class="an">${esc(s.station)}</div><div class="ag">${esc(s.group)}</div></div><div class="av" style="color:${rc(s.rate)}">${s.rate}%</div><div class="avol">${fmt(s.vol)} 件</div>`;
    al.appendChild(e);});
-  document.getElementById('gTableDesc').innerHTML=`一般件來源：數據統計 · 站所 ${G.station_count} / 組別 ${G.group_count} · 配結佔比 ≥ ${TH.good}% 達標(綠)，&lt; ${TH.warn}% 需關注(紅) · 點組別列可展開`;
+  document.getElementById('gTableDesc').innerHTML=`一般件來源：全部 − 當配（依站所相減）· 站所 ${G.station_count} / 組別 ${G.group_count} · 配結佔比 ≥ ${TH.good}% 達標(綠)，&lt; ${TH.warn}% 需關注(紅) · 點組別列可展開`;
   const tb=document.getElementById('gStationBody');tb.innerHTML='';let last=null;
   G.stations.forEach(s=>{
    if(s.group!==last){const gr=document.createElement('tr');gr.className='grouprow click';gr.innerHTML=`<td class="l" colspan="8">▸ ${esc(s.group)}　<span style="font-weight:500;color:var(--ink2);font-size:11px">(點擊展開)</span></td>`;gr.onclick=()=>openGroup(s.group);tb.appendChild(gr);last=s.group;}

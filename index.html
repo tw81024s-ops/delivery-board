@@ -215,6 +215,7 @@ body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opa
     <button class="tab active" data-tab="overview">🚚 當配總覽</button>
     <button class="tab" data-tab="detail">📋 滯留明細</button>
     <button class="tab" data-tab="transit">🚌 轉運滯留</button>
+    <button class="tab" data-tab="general">🧰 一般件總覽</button>
     <button class="tab exportbtn" id="exportAll">⬇ 匯出 Excel（全部）</button>
   </nav>
 
@@ -234,6 +235,16 @@ body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opa
       <div class="card"><h3>📍 待改善站所</h3><div class="desc" id="alertDesc"></div><div id="alertList"></div></div>
     </section>
     <section class="card full"><h3>📦 全站別結案明細</h3><div class="desc" id="tableDesc"></div><div class="tablewrap"><table class="stable"><thead><tr><th class="l">組別 / 站所</th><th>應配總量</th><th>已配結</th><th>未結量</th><th>轉運中</th><th style="min-width:148px">配結佔比</th><th>滯留率</th><th>狀態</th></tr></thead><tbody id="stationBody"></tbody></table></div></section>
+  </div>
+
+  <div id="tab-general" hidden>
+    <section class="kpis" id="gKpis"></section>
+    <section class="grid">
+      <div class="card"><h3>🧰 組別績效</h3><div class="desc">點擊任一組別 → 查看該組各站所概況</div><div id="gGroupList"></div></div>
+      <div class="card"><h3>🎀 結案概況</h3><div class="desc">已配結 vs 未結量</div><div class="donut-wrap"><div class="donut" id="gDonut"></div><div class="legend" id="gDonutLegend"></div></div><div class="chips" id="gOpChips"></div></div>
+      <div class="card"><h3>📍 待改善站所</h3><div class="desc" id="gAlertDesc"></div><div id="gAlertList"></div></div>
+    </section>
+    <section class="card full"><h3>📦 全站別結案明細（一般件）</h3><div class="desc" id="gTableDesc"></div><div class="tablewrap"><table class="stable"><thead><tr><th class="l">組別 / 站所</th><th>應配總量</th><th>已配結</th><th>未結量</th><th>轉運中</th><th style="min-width:148px">配結佔比</th><th>滯留率</th><th>狀態</th></tr></thead><tbody id="gStationBody"></tbody></table></div></section>
   </div>
 
   <!-- ===== 滯留明細 ===== -->
@@ -357,7 +368,7 @@ function parseWorkbook(ab){
   if(_hr<0)throw new Error('解析不到站所資料，請確認匯入的是正確的日結報表');
   // 2) 依標題對應欄位（找不到回 -1）
   const _find=(...keys)=>{for(let c=_rng.s.c;c<=_rng.e.c;c++){const t=_norm(_cell(_hr,c));for(const k of keys){if(t===k)return c;}}for(let c=_rng.s.c;c<=_rng.e.c;c++){const t=_norm(_cell(_hr,c));for(const k of keys){if(t.indexOf(k)>=0)return c;}}return -1;};
-  const COL={group:_find('組別'),station:_find('站所'),vol:_find('應配總量','應配'),transit:_find('轉運中'),arrived:_find('到站件數','到站'),done:_find('已配結'),open:_find('未結量'),proc:_find('已處理'),unproc:_find('未處理')};
+  const COL={group:_find('組別'),station:_find('站所'),vol:_find('應配總量','應配'),unpick:_find('未取件'),transit:_find('轉運中'),arrived:_find('到站件數','到站'),done:_find('已配結'),open:_find('未結量'),proc:_find('已處理'),unproc:_find('未處理')};
   const gv=(r,key)=>{const c=COL[key];return (c==null||c<0)?undefined:_cell(r,c);};
   const _rate=(a,b)=>b?Math.round(a/b*1000)/10:0;
   const stations=[];let cur=null,total=null;
@@ -366,7 +377,7 @@ function parseWorkbook(ab){
     if(grp==='組別')continue;                 // 跳過表中重複表頭
     if(grp==='總計'){                          // 總計列
       const v=Math.round(_num(gv(r,'vol'))||0),dn=Math.round(_num(gv(r,'done'))||0),op=Math.round(_num(gv(r,'open'))||0),pc=Math.round(_num(gv(r,'proc'))||0),up=Math.round(_num(gv(r,'unproc'))||0),tr=Math.round(_num(gv(r,'transit'))||0),ar=Math.round(_num(gv(r,'arrived'))||0);
-      total={vol:v,transit:tr,arrived:ar,done:dn,open:op,unproc:up,rate:_rate(dn,v),close_rate:_rate(dn,v),stay_rate:_rate(op,v),proc_rate:_rate(pc,pc+up)};
+      total={vol:v,transit:tr,arrived:ar,done:dn,open:op,unpick:Math.round(_num(gv(r,'unpick'))||0),unproc:up,rate:_rate(dn,v),close_rate:_rate(dn,v),stay_rate:_rate(op,v),proc_rate:_rate(pc,pc+up)};
       continue;
     }
     if(grpRaw!=null&&grp!=='')cur=String(grpRaw).replace(/[\r\n]/g,'');
@@ -374,7 +385,7 @@ function parseWorkbook(ab){
     const vol=_num(gv(r,'vol'));
     if(!sta||vol==null)continue;
     const done=Math.round(_num(gv(r,'done'))||0),open=Math.round(_num(gv(r,'open'))||0),pc=Math.round(_num(gv(r,'proc'))||0),up=Math.round(_num(gv(r,'unproc'))||0);
-    stations.push({group:cur,station:sta,vol:Math.round(vol),transit:Math.round(_num(gv(r,'transit'))||0),done:done,open:open,unproc:up,rate:_rate(done,vol),stay:_rate(open,vol),proc:_rate(pc,pc+up)});
+    stations.push({group:cur,station:sta,vol:Math.round(vol),unpick:Math.round(_num(gv(r,'unpick'))||0),transit:Math.round(_num(gv(r,'transit'))||0),done:done,open:open,unproc:up,rate:_rate(done,vol),stay:_rate(open,vol),proc:_rate(pc,pc+up)});
   }
   if(!stations.length)throw new Error('解析不到站所資料，請確認匯入的是正確的日結報表');
   const gm={};stations.forEach(s=>{const x=gm[s.group]||(gm[s.group]={group:s.group,vol:0,done:0,open:0,transit:0,stations:0});x.vol+=s.vol;x.done+=s.done;x.open+=s.open;x.transit+=s.transit;x.stations++;});
@@ -422,8 +433,34 @@ function parseWorkbook(ab){
       transit={total:tot,retain:rt,rate:tot?Math.round(rt/tot*1000)/10:0,transit:tc,unsettled:uns,unpicked:upk,branches:arr,records};
     }
   }
+  // ===== 一般件總覽：由「數據統計」過濾一般件，依 組別→站所 彙總 =====
+  let general=null;
+  if(ds&&ds['!ref']){
+    const grng=XLSX.utils.decode_range(ds['!ref']);
+    const gcol={};for(let c=grng.s.c;c<=grng.e.c;c++){const h=ds[XLSX.utils.encode_cell({r:grng.s.r,c:c})];const v=h?String(h.v).trim():'';if(v&&!(v in gcol))gcol[v]=c;}
+    const cKind=gcol['當配與一般件整理'],cGrp=gcol['組別'],cSta=gcol['處理站所'],cZ=(gcol['貨態整理拆分']!=null?gcol['貨態整理拆分']:gcol['貨態整理']);
+    if(cKind!=null&&cSta!=null&&cZ!=null){
+      const gat=(r,c)=>{const x=(c==null)?null:ds[XLSX.utils.encode_cell({r:r,c:c})];return x&&x.v!=null?String(x.v).trim():'';};
+      const gmapn={};
+      for(let r=grng.s.r+1;r<=grng.e.r;r++){
+        if(gat(r,cKind)!=='一般件')continue;
+        const grp=gat(r,cGrp)||'（未分組）';const sta=gat(r,cSta);if(!sta)continue;
+        const key=grp+'\u0001'+sta;const o=gmapn[key]||(gmapn[key]={group:grp,station:sta,vol:0,done:0,open:0,transit:0,unpick:0});
+        o.vol++;const z=gat(r,cZ);
+        if(z==='配結含配異結案')o.done++;else if(z==='轉運中')o.transit++;else if(z==='未取件')o.unpick++;else o.open++;
+      }
+      const gst=Object.values(gmapn).map(o=>{o.arrived=o.vol-o.transit;o.rate=o.vol?Math.round(o.done/o.vol*1000)/10:0;o.stay=o.vol?Math.round(o.open/o.vol*1000)/10:0;o.proc=0;o.unproc=0;return o;});
+      gst.sort((a,b)=>a.group<b.group?-1:(a.group>b.group?1:b.vol-a.vol));
+      const ggm={};gst.forEach(s=>{const x=ggm[s.group]||(ggm[s.group]={group:s.group,vol:0,done:0,open:0,transit:0,stations:0});x.vol+=s.vol;x.done+=s.done;x.open+=s.open;x.transit+=s.transit;x.stations++;});
+      const ggroups=Object.values(ggm).map(x=>{x.rate=x.vol?Math.round(x.done/x.vol*1000)/10:0;return x;}).sort((a,b)=>b.vol-a.vol);
+      let tv=0,td=0,to=0,tt=0,tu=0;gst.forEach(s=>{tv+=s.vol;td+=s.done;to+=s.open;tt+=s.transit;tu+=s.unpick;});
+      const gtotal={vol:tv,transit:tt,arrived:tv-tt,done:td,open:to,unpick:tu,unproc:0,rate:tv?Math.round(td/tv*1000)/10:0,stay_rate:tv?Math.round(to/tv*1000)/10:0,close_rate:(tv-tt)?Math.round(td/(tv-tt)*1000)/10:0,proc_rate:0};
+      const galerts=gst.filter(s=>s.vol>=TH.alertMinVol).sort((a,b)=>a.rate-b.rate).slice(0,6);
+      general={total:gtotal,groups:ggroups,stations:gst,alerts:galerts,station_count:gst.length,group_count:ggroups.length};
+    }
+  }
   let label='';for(let r=_rng.s.r;r<=Math.min(_rng.e.r,_hr);r++){for(let c=_rng.s.c;c<=_rng.e.c;c++){const v=_cell(r,c);if(v!=null&&/日結表|日結|\d{1,2}\/\d{1,2}/.test(String(v))){label=String(v).replace(/[\r\n]/g,' ').trim();break;}}if(label)break;}
-  return {total,groups,stations,alerts,retention,ret_summary,transit,report_label:label?String(label):'',station_count:stations.length,group_count:groups.length,generated_at:new Date().toLocaleString('zh-Hant',{hour12:false}).replace(/\//g,'-')};
+  return {total,groups,stations,alerts,retention,ret_summary,transit,general,report_label:label?String(label):'',station_count:stations.length,group_count:groups.length,generated_at:new Date().toLocaleString('zh-Hant',{hour12:false}).replace(/\//g,'-')};
 }
 
 function statusOf(r){return r>=TH.good?['達標',C.good]:r>=TH.warn?['普通',C.warn]:['關注',C.bad];}
@@ -431,7 +468,7 @@ function stationRow(s){const st=statusOf(s.rate);
   return `<td class="l station">${esc(s.station)}</td><td>${fmt(s.vol)}</td><td style="color:var(--ink2)">${fmt(s.done)}</td><td style="color:${s.open>0?'#e4007f':'var(--muted)'}">${fmt(s.open)}</td><td style="color:var(--ink2)">${fmt(s.transit)}</td><td><div class="ratebox"><div class="mini"><i style="width:${s.rate}%;background:${rg(s.rate)}"></i></div><span style="color:${rc(s.rate)};font-weight:700">${s.rate}%</span></div></td><td style="color:${s.stay>=15?C.bad:'var(--ink2)'}">${s.stay}%</td><td style="text-align:right"><span class="badge" style="color:${st[1]};background:${st[1]}1a">${st[0]}</span></td>`;}
 
 function render(D,isSample){
-  CURRENT=D;const T=D.total;
+  CURRENT=D;window.DALL=D;window.__genP=false;const T=D.total;
   document.getElementById('dateLabel').textContent=(D.report_label||'').replace('日結表','').trim()||'當配';
   document.getElementById('genLabel').textContent=(isSample?'範例 ':'更新 ')+(D.generated_at||'');
   document.getElementById('alertDesc').textContent=`應配 ≥ ${TH.alertMinVol} 件、配結佔比最低的站所`;
@@ -442,9 +479,9 @@ function render(D,isSample){
   const kpis=[
    {tag:'應配總量',val:T.vol,unit:'件',acc:C.pink,foot:`到站 <b>${fmt(T.arrived)}</b> · 轉運中 <b>${fmt(T.transit)}</b>`},
    {tag:'配結佔比',val:T.rate,dec:1,unit:'%',acc:C.good,foot:`已配結 <b>${fmt(T.done)}</b> 件`},
-   {tag:'未結量',val:T.open,unit:'件',acc:C.bad,foot:`未配佔比 <b>${(100-T.rate).toFixed(1)}%</b>`},
-   {tag:'站所滯留率',val:T.stay_rate,dec:1,unit:'%',acc:C.violet,foot:`站所結案率 <b>${T.close_rate}%</b>`},
-   {tag:'站所處理率',val:T.proc_rate,dec:1,unit:'%',acc:C.cyan,foot:`未處理 <b>${fmt(T.unproc)}</b> 件`},
+   {tag:'未結量',val:T.open,unit:'件',acc:C.bad,foot:`未取件 <b>${fmt(T.unpick||0)}</b> 件`},
+   {tag:'站所滯留率',val:T.stay_rate,dec:1,unit:'%',acc:C.violet,foot:`未配佔比（未結 / 應配）`},
+   {tag:'站所結案率',val:pctOf(T.done,T.arrived),dec:1,unit:'%',acc:C.cyan,foot:`到站 <b>${fmt(T.arrived)}</b> 件`},
   ];
   const kEl=document.getElementById('kpis');kEl.innerHTML='';
   kpis.forEach((k,i)=>{const d=document.createElement('div');d.className='kpi';d.style.setProperty('--acc',k.acc);
@@ -485,6 +522,46 @@ function render(D,isSample){
   });
 
   buildZoneFilter();renderPivot();renderDetail();renderTransit();
+}
+
+function renderGeneral(G){
+  const host=document.getElementById('gKpis');if(!host)return;
+  if(!G||!G.stations||!G.stations.length){host.innerHTML='<div style="padding:18px;color:var(--ink2);font-weight:600">這份報表沒有可解析的一般件資料（數據統計）。</div>';return;}
+  const T=G.total;
+  const kpis=[
+   {tag:'應配總量',val:T.vol,unit:'件',acc:C.pink,foot:`到站 <b>${fmt(T.arrived)}</b> · 轉運中 <b>${fmt(T.transit)}</b>`},
+   {tag:'配結佔比',val:T.rate,dec:1,unit:'%',acc:C.good,foot:`已配結 <b>${fmt(T.done)}</b> 件`},
+   {tag:'未結量',val:T.open,unit:'件',acc:C.bad,foot:`未取件 <b>${fmt(T.unpick||0)}</b> 件`},
+   {tag:'站所滯留率',val:T.stay_rate,dec:1,unit:'%',acc:C.violet,foot:`未配佔比（未結 / 應配）`},
+   {tag:'站所結案率',val:pctOf(T.done,T.arrived),dec:1,unit:'%',acc:C.cyan,foot:`到站 <b>${fmt(T.arrived)}</b> 件`},
+  ];
+  host.innerHTML='';kpis.forEach((k,i)=>{const d=document.createElement('div');d.className='kpi';d.style.setProperty('--acc',k.acc);
+   d.innerHTML=`<div class="tag"><span class="dot" style="background:${k.acc}"></span>${k.tag}</div><div class="num" style="color:${k.acc}"><span class="cu">0</span><span class="unit">${k.unit}</span></div><div class="foot">${k.foot}</div>`;
+   host.appendChild(d);setTimeout(()=>countUp(d.querySelector('.cu'),k.val,900,k.dec||0),120+i*55);});
+  const gmax=Math.max(1,...G.groups.map(x=>x.vol));
+  const gl=document.getElementById('gGroupList');gl.innerHTML='';
+  G.groups.forEach(x=>{const w=x.vol/gmax*100;const r=document.createElement('div');r.className='grow';r.tabIndex=0;
+   r.innerHTML=`<div class="rh"><span class="gnm"><span class="chev">▸</span>${esc(x.group)}</span><span><span class="vol">${fmt(x.vol)} 件 · ${x.stations} 站</span><span class="rate-tag" style="color:${rc(x.rate)}">${x.rate}%</span></span></div><div class="track"><div class="fill" style="background:${rg(x.rate)}"></div></div>`;
+   r.onclick=()=>openGroup(x.group);r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openGroup(x.group);}};
+   gl.appendChild(r);const f=r.querySelector('.fill');requestAnimationFrame(()=>{f.style.transition='width 1s cubic-bezier(.22,1,.36,1)';setTimeout(()=>f.style.width=w+'%',60);});});
+  (function(){const done=T.done,open=T.open,tot=done+open||1,pd=done/tot*100,po=open/tot*100,R=46,CIRC=2*Math.PI*R,sz=120;
+   const d=document.getElementById('gDonut');d.style.width=sz+'px';d.style.height=sz+'px';
+   d.innerHTML=`<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="transform:rotate(-90deg)"><circle cx="${sz/2}" cy="${sz/2}" r="${R}" fill="none" stroke="#ffe9f4" stroke-width="15"/><circle id="gaD" cx="${sz/2}" cy="${sz/2}" r="${R}" fill="none" stroke="url(#gg2)" stroke-width="15" stroke-linecap="round" stroke-dasharray="0 ${CIRC}"/><circle id="gaO" cx="${sz/2}" cy="${sz/2}" r="${R}" fill="none" stroke="#ef4444" stroke-width="15" stroke-linecap="round" stroke-dasharray="0 ${CIRC}" stroke-dashoffset="${-pd/100*CIRC}"/><defs><linearGradient id="gg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#16a34a"/></linearGradient></defs></svg><div class="center"><div class="big" style="color:var(--good)">${T.rate}%</div><div class="lbl">配結佔比</div></div>`;
+   const aD=d.querySelector('#gaD'),aO=d.querySelector('#gaO');setTimeout(()=>{aD.style.transition='stroke-dasharray 1.1s cubic-bezier(.22,1,.36,1)';aO.style.transition='stroke-dasharray 1.1s cubic-bezier(.22,1,.36,1) .15s';aD.setAttribute('stroke-dasharray',`${pd/100*CIRC} ${CIRC}`);aO.setAttribute('stroke-dasharray',`${po/100*CIRC} ${CIRC}`);},150);
+   document.getElementById('gDonutLegend').innerHTML=`<div class="li"><span class="sw" style="background:linear-gradient(135deg,#34d399,#16a34a)"></span>已配結 <span class="lv">${fmt(done)}</span></div><div class="li"><span class="sw" style="background:#ef4444"></span>未結量 <span class="lv">${fmt(open)}</span></div>`;
+   document.getElementById('gOpChips').innerHTML=`<div class="chip"><div class="cv" style="color:var(--pink)">${fmt(T.transit)}</div><div class="cl">轉運中</div></div><div class="chip"><div class="cv" style="color:#f59e0b">${fmt(T.unpick||0)}</div><div class="cl">未取件</div></div><div class="chip"><div class="cv" style="color:var(--ink2)">${fmt(T.arrived)}</div><div class="cl">到站件數</div></div>`;
+  })();
+  document.getElementById('gAlertDesc').textContent=`應配 ≥ ${TH.alertMinVol} 件、配結佔比最低的站所`;
+  const al=document.getElementById('gAlertList');al.innerHTML='';
+  G.alerts.forEach(s=>{const e=document.createElement('div');e.className='alert';
+   e.innerHTML=`<div style="flex:1"><div class="an">${esc(s.station)}</div><div class="ag">${esc(s.group)}</div></div><div class="av" style="color:${rc(s.rate)}">${s.rate}%</div><div class="avol">${fmt(s.vol)} 件</div>`;
+   al.appendChild(e);});
+  document.getElementById('gTableDesc').innerHTML=`一般件來源：數據統計 · 站所 ${G.station_count} / 組別 ${G.group_count} · 配結佔比 ≥ ${TH.good}% 達標(綠)，&lt; ${TH.warn}% 需關注(紅) · 點組別列可展開`;
+  const tb=document.getElementById('gStationBody');tb.innerHTML='';let last=null;
+  G.stations.forEach(s=>{
+   if(s.group!==last){const gr=document.createElement('tr');gr.className='grouprow click';gr.innerHTML=`<td class="l" colspan="8">▸ ${esc(s.group)}　<span style="font-weight:500;color:var(--ink2);font-size:11px">(點擊展開)</span></td>`;gr.onclick=()=>openGroup(s.group);tb.appendChild(gr);last=s.group;}
+   const tr=document.createElement('tr');tr.innerHTML=stationRow(s);tb.appendChild(tr);
+  });
 }
 
 const pctOf=(a,b)=>b?Math.round(a/b*1000)/10:0;
@@ -659,6 +736,9 @@ function switchTab(name){
   document.getElementById('tab-overview').hidden=(name!=='overview');
   document.getElementById('tab-detail').hidden=(name!=='detail');
   document.getElementById('tab-transit').hidden=(name!=='transit');
+  document.getElementById('tab-general').hidden=(name!=='general');
+  if(name==='general'){if(window.DALL){CURRENT=window.DALL.general||null;if(!window.__genP){renderGeneral(window.DALL.general);window.__genP=true;}}}
+  else if(name==='overview'){if(window.DALL)CURRENT=window.DALL;}
 }
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.tab));
 function jumpToDetail(band){document.getElementById('fBand').value=band||'';clearStation();retState.page=0;renderDetail();switchTab('detail');window.scrollTo({top:0,behavior:'smooth'});}
